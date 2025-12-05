@@ -90,6 +90,8 @@ class ForwardBatch:
     # Video inputs
     video_path: str | None = None
     video_latent: torch.Tensor | None = None
+    action_path: str | list[str] | None = None
+    actions: torch.Tensor | None = None  # Per-frame action vectors
 
     # Primary encoder embeddings
     prompt_embeds: list[torch.Tensor] = field(default_factory=list)
@@ -210,6 +212,8 @@ class TrainingBatch:
     noise_latents: torch.Tensor | None = None
     encoder_hidden_states: torch.Tensor | None = None
     encoder_attention_mask: torch.Tensor | None = None
+    action_path: str | list[str] | None = None
+    actions: torch.Tensor | None = None
     # i2v
     preprocessed_image: torch.Tensor | None = None
     image_embeds: torch.Tensor | None = None

@@ -33,7 +33,10 @@ path_to_your_dataset_folder/
 To geranate the `videos2caption.json` and `merge.txt`, run
 
 ``` python
-python scripts/dataset_preparation/prepare_json_file.py --data_folder mini_i2v_dataset/crush-smol_raw/ --output your_output_folder
+python scripts/dataset_preparation/prepare_json_file.py \
+    --data_folder mini_i2v_dataset/crush-smol_raw/ \
+    --output your_output_folder \
+    --actions_file actions.txt   # optional: per-video action paths aligned with videos.txt
 ```
 
 Adjust the `DATA_MERGE_PATH` and `OUTPUT_DIR` in `scripts/preprocess/v1_preprocess_****.sh` accordingly and run:

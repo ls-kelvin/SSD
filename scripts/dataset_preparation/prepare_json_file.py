@@ -41,7 +41,8 @@ def get_video_info(video_path):
 
 def prepare_dataset_json(folder_path,
                          output_name="videos2caption.json",
-                         num_workers=None) -> None:
+                         num_workers=None,
+                         actions_file: str | None = None) -> None:
     """Prepare dataset information from a folder containing videos and prompt.txt."""
     folder_path = Path(folder_path)
 
@@ -61,9 +62,21 @@ def prepare_dataset_json(folder_path,
     with open(videos_file) as f:
         video_paths = [line.strip() for line in f.readlines() if line.strip()]
 
+    action_paths: list[str] | None = None
+    if actions_file is not None:
+        actions_path = folder_path / actions_file
+        if not actions_path.exists():
+            raise FileNotFoundError(f"{actions_path} not found")
+        with open(actions_path) as f:
+            action_paths = [line.strip() for line in f.readlines() if line.strip()]
+
     if len(prompts) != len(video_paths):
         raise ValueError(
             f"Number of prompts ({len(prompts)}) does not match number of videos ({len(video_paths)})"
+        )
+    if action_paths is not None and len(action_paths) != len(video_paths):
+        raise ValueError(
+            f"Number of action paths ({len(action_paths)}) does not match number of videos ({len(video_paths)})"
         )
 
     # Prepare arguments for multiprocessing
@@ -84,8 +97,10 @@ def prepare_dataset_json(folder_path,
 
     # Combine results with prompts
     dataset_info = []
-    for result, prompt in zip(results, prompts):
+    for idx, (result, prompt) in enumerate(zip(results, prompts, strict=True)):
         result["cap"] = [prompt]
+        if action_paths is not None:
+            result["action_path"] = action_paths[idx]
         dataset_info.append(result)
 
     # Calculate total processing time
@@ -129,9 +144,18 @@ def parse_args() -> argparse.Namespace:
                         type=int,
                         default=32,
                         help='Number of worker processes (default: 16)')
+    parser.add_argument(
+        '--actions_file',
+        type=str,
+        default=None,
+        help='Optional file listing per-video action paths (one per line, aligned with videos.txt).'
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    prepare_dataset_json(args.data_folder, args.output, args.workers)
+    prepare_dataset_json(args.data_folder,
+                         args.output,
+                         args.workers,
+                         actions_file=args.actions_file)

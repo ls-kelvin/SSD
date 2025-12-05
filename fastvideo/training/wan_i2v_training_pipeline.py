@@ -81,6 +81,10 @@ class WanI2VTrainingPipeline(TrainingPipeline):
         image_latents = image_latents[:, :, :self.training_args.num_latent_t]
         pil_image = batch['pil_image']
         infos = batch['info_list']
+        actions = batch.get('actions') if isinstance(batch, dict) else None
+        if actions is None and isinstance(batch, dict) and batch.get(
+                'action_path'):
+            actions = self._load_actions_from_path(batch['action_path'])
 
         training_batch.latents = latents.to(get_local_torch_device(),
                                             dtype=torch.bfloat16)
@@ -94,6 +98,9 @@ class WanI2VTrainingPipeline(TrainingPipeline):
         training_batch.image_latents = image_latents.to(
             get_local_torch_device())
         training_batch.infos = infos
+        if actions is not None:
+            training_batch.actions = torch.as_tensor(actions).to(
+                get_local_torch_device(), dtype=torch.bfloat16)
 
         return training_batch
 
@@ -160,6 +167,10 @@ class WanI2VTrainingPipeline(TrainingPipeline):
             "return_dict":
             False,
         }
+        if training_batch.actions is not None:
+            target_len = training_batch.noisy_model_input.shape[2]
+            training_batch.input_kwargs["actions"] = self._compress_actions(
+                training_batch.actions, target_len)
         return training_batch
 
     def _prepare_validation_batch(self, sampling_param: SamplingParam,

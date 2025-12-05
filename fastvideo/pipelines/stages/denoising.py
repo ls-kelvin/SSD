@@ -10,6 +10,7 @@ from collections.abc import Iterable
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 from einops import rearrange
 from tqdm.auto import tqdm
 
@@ -297,6 +298,14 @@ class DenoisingStage(PipelineStage):
                         [latent_model_input, batch.image_latent],
                         dim=1).to(target_dtype)
 
+                prepared_actions = self._prepare_actions(
+                    batch=batch,
+                    latents=latent_model_input,
+                    fastvideo_args=fastvideo_args,
+                )
+                action_kwargs = self.prepare_extra_func_kwargs(
+                    self.transformer.forward, {"actions": prepared_actions})
+
                 assert not torch.isnan(
                     latent_model_input).any(), "latent_model_input contains nan"
                 if fastvideo_args.pipeline_config.ti2v_task and batch.pil_image is not None:
@@ -400,6 +409,7 @@ class DenoisingStage(PipelineStage):
                             t_expand,
                             guidance=guidance_expand,
                             **image_kwargs,
+                            **action_kwargs,
                             **pos_cond_kwargs,
                         )
 
@@ -416,6 +426,7 @@ class DenoisingStage(PipelineStage):
                                 t_expand,
                                 guidance=guidance_expand,
                                 **image_kwargs,
+                                **action_kwargs,
                                 **neg_cond_kwargs,
                             )
 
@@ -496,6 +507,42 @@ class DenoisingStage(PipelineStage):
                         torch.mps.current_allocated_memory())
 
         return batch
+
+    def _prepare_actions(self, batch: ForwardBatch, latents: torch.Tensor,
+                         fastvideo_args: FastVideoArgs) -> torch.Tensor | None:
+        """Downsample/align actions to latent temporal length."""
+        actions = batch.actions
+        if actions is None:
+            return None
+
+        actions = torch.as_tensor(actions,
+                                  device=latents.device,
+                                  dtype=latents.dtype)
+        target_len = latents.shape[2]
+        if actions.shape[1] == target_len:
+            return actions
+
+        # Use VAE temporal compression ratio if available, fallback to 4
+        vae_arch = fastvideo_args.pipeline_config.vae_config.arch_config
+        compression = getattr(vae_arch, "temporal_compression_ratio",
+                              getattr(vae_arch, "scale_factor_temporal", 4))
+        src_len = actions.shape[1]
+
+        if src_len % target_len == 0:
+            step = src_len // target_len
+            actions = actions.view(actions.shape[0], target_len, step,
+                                   -1).mean(dim=2)
+        elif src_len // compression == target_len and src_len % compression == 0:
+            actions = actions.view(actions.shape[0], target_len, compression,
+                                   -1).mean(dim=2)
+        else:
+            actions = F.interpolate(actions.transpose(1, 2).unsqueeze(-1),
+                                    size=(target_len, 1),
+                                    mode="linear",
+                                    align_corners=False).squeeze(-1).transpose(
+                                        1, 2)
+
+        return actions
 
     def prepare_extra_func_kwargs(self, func, kwargs) -> dict[str, Any]:
         """

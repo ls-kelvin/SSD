@@ -51,6 +51,7 @@ class BaseDiT(nn.Module, ABC):
                 timestep: torch.LongTensor,
                 encoder_hidden_states_image: torch.Tensor | list[torch.Tensor]
                 | None = None,
+                actions: torch.Tensor | None = None,
                 guidance=None,
                 **kwargs) -> torch.Tensor:
         pass

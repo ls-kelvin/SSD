@@ -222,4 +222,8 @@ def collate_rows_from_parquet_schema(rows,
     if info_list and 'caption' in info_list[0]:
         batch_data['caption_text'] = [info['caption'] for info in info_list]
 
+    # Expose action paths directly for loaders
+    if "action_path" in metadata_fields:
+        batch_data["action_path"] = [row.get("action_path", "") for row in rows]
+
     return batch_data

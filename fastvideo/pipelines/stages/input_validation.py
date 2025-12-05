@@ -4,6 +4,7 @@ Input validation stage for diffusion pipelines.
 """
 
 import torch
+import numpy as np
 import torchvision.transforms.functional as TF
 from PIL import Image
 
@@ -89,6 +90,26 @@ class InputValidationStage(PipelineStage):
             raise ValueError(
                 f"Number of inference steps must be positive, but got {batch.num_inference_steps}"
             )
+
+        # Load and validate action conditioning inputs if provided
+        if batch.actions is None and batch.action_path:
+            batch.actions = self._load_actions_from_path(batch.action_path)
+
+        if batch.actions is not None:
+            batch.actions = torch.as_tensor(batch.actions)
+            if batch.actions.dim() < 2:
+                raise ValueError(
+                    f"Actions must have shape [batch, frames, ...], got {batch.actions.shape}"
+                )
+            target_num_frames = (batch.num_frames[0] if isinstance(
+                batch.num_frames, list) else batch.num_frames)
+            action_frames = batch.actions.shape[1]
+            if target_num_frames is None:
+                batch.num_frames = action_frames
+            elif target_num_frames != action_frames:
+                raise ValueError(
+                    f"Action sequence length ({action_frames}) must match num_frames ({target_num_frames})."
+                )
 
         # Validate guidance scale if using classifier-free guidance
         if batch.do_classifier_free_guidance and batch.guidance_scale <= 0:
@@ -206,6 +227,25 @@ class InputValidationStage(PipelineStage):
             "guidance_scale", batch.guidance_scale, lambda x: not batch.
             do_classifier_free_guidance or V.positive_float(x))
         return result
+
+    def _load_actions_from_path(self, action_path: str | list[str]) -> torch.Tensor:
+        """Load action tensors from disk (.pt/.pth/.npy supported)."""
+        paths = action_path if isinstance(action_path, list) else [action_path]
+        paths = [p for p in paths if p]  # drop empty strings
+        if not paths:
+            raise ValueError("No valid action paths provided.")
+        tensors = []
+        for p in paths:
+            if p.endswith((".pt", ".pth")):
+                data = torch.load(p)
+            elif p.endswith(".npy"):
+                data = torch.from_numpy(np.load(p))
+            else:
+                raise ValueError(f"Unsupported action file type: {p}")
+            tensors.append(torch.as_tensor(data))
+        if len(tensors) == 1:
+            return tensors[0]
+        return torch.stack(tensors, dim=0)
 
     def verify_output(self, batch: ForwardBatch,
                       fastvideo_args: FastVideoArgs) -> VerificationResult:

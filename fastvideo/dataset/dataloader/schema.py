@@ -43,6 +43,7 @@ pyarrow_schema_i2v = pa.schema([
     pa.field("media_type", pa.string()),  # 'image' or 'video'
     pa.field("width", pa.int64()),
     pa.field("height", pa.int64()),
+    pa.field("action_path", pa.string()),
     # -- Video-specific (can be null/default for images) ---
     # Number of frames processed (e.g., 1 for image, N for video)
     pa.field("num_frames", pa.int64()),
@@ -73,6 +74,7 @@ pyarrow_schema_t2v = pa.schema([
     pa.field("media_type", pa.string()),  # 'image' or 'video'
     pa.field("width", pa.int64()),
     pa.field("height", pa.int64()),
+    pa.field("action_path", pa.string()),
     # -- Video-specific (can be null/default for images) ---
     # Number of frames processed (e.g., 1 for image, N for video)
     pa.field("num_frames", pa.int64()),

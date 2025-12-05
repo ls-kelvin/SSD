@@ -318,7 +318,8 @@ def load_model_from_full_model_state_dict(
                        unused_keys)
 
     # List of allowed parameter name patterns
-    ALLOWED_NEW_PARAM_PATTERNS = ["gate_compress"]  # Can be extended as needed
+    ALLOWED_NEW_PARAM_PATTERNS = ["gate_compress", "action_proj", "action_mlp"
+                                 ]  # Can be extended as needed
     for new_param_name in unused_keys:
         if not any(pattern in new_param_name
                    for pattern in ALLOWED_NEW_PARAM_PATTERNS):
@@ -330,15 +331,22 @@ def load_model_from_full_model_state_dict(
             )
         meta_sharded_param = meta_sd.get(new_param_name)
         if not hasattr(meta_sharded_param, "device_mesh"):
-            # Initialize with zeros
-            sharded_tensor = torch.zeros_like(meta_sharded_param,
-                                              device=device,
-                                              dtype=param_dtype)
-        else:
-            # Initialize with zeros and distribute
-            full_tensor = torch.zeros_like(meta_sharded_param,
+            full_tensor = torch.empty_like(meta_sharded_param,
                                            device=device,
                                            dtype=param_dtype)
+            if full_tensor.dim() >= 2:
+                nn.init.xavier_uniform_(full_tensor)
+            else:
+                nn.init.zeros_(full_tensor)
+            sharded_tensor = full_tensor
+        else:
+            full_tensor = torch.empty_like(meta_sharded_param,
+                                           device=device,
+                                           dtype=param_dtype)
+            if full_tensor.dim() >= 2:
+                nn.init.xavier_uniform_(full_tensor)
+            else:
+                nn.init.zeros_(full_tensor)
             sharded_tensor = distribute_tensor(
                 full_tensor,
                 meta_sharded_param.device_mesh,

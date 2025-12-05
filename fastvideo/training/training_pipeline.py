@@ -11,6 +11,7 @@ from fastvideo.profiler import profile_region
 import imageio
 import numpy as np
 import torch
+import torch.nn.functional as F
 import torch.distributed as dist
 import torchvision
 from diffusers import FlowMatchEulerDiscreteScheduler
@@ -277,6 +278,12 @@ class TrainingPipeline(LoRAPipeline, ABC):
             encoder_hidden_states = batch['text_embedding']
             encoder_attention_mask = batch['text_attention_mask']
             infos = batch['info_list']
+            actions = None
+            if isinstance(batch, dict):
+                if 'actions' in batch:
+                    actions = batch['actions']
+                elif 'action_path' in batch and batch['action_path']:
+                    actions = self._load_actions_from_path(batch['action_path'])
 
             training_batch.latents = latents.to(get_local_torch_device(),
                                                 dtype=torch.bfloat16)
@@ -285,6 +292,9 @@ class TrainingPipeline(LoRAPipeline, ABC):
             training_batch.encoder_attention_mask = encoder_attention_mask.to(
                 get_local_torch_device(), dtype=torch.bfloat16)
             training_batch.infos = infos
+            if actions is not None:
+                training_batch.actions = torch.as_tensor(actions).to(
+                    get_local_torch_device(), dtype=torch.bfloat16)
 
         return training_batch
 
@@ -430,7 +440,59 @@ class TrainingPipeline(LoRAPipeline, ABC):
             "return_dict":
             False,
         }
+        if training_batch.actions is not None:
+            target_len = training_batch.noisy_model_input.shape[2]
+            training_batch.input_kwargs["actions"] = self._compress_actions(
+                training_batch.actions, target_len)
         return training_batch
+
+    def _compress_actions(self, actions: torch.Tensor,
+                          target_len: int) -> torch.Tensor:
+        """Downsample/align action sequence to the latent temporal length."""
+        actions = torch.as_tensor(actions,
+                                  device=get_local_torch_device(),
+                                  dtype=torch.bfloat16)
+        if actions.shape[1] == target_len:
+            return actions
+
+        vae_arch = self.training_args.pipeline_config.vae_config.arch_config
+        compression = getattr(vae_arch, "temporal_compression_ratio",
+                              getattr(vae_arch, "scale_factor_temporal", 4))
+        src_len = actions.shape[1]
+
+        if src_len % target_len == 0:
+            step = src_len // target_len
+            actions = actions.view(actions.shape[0], target_len, step,
+                                   -1).mean(dim=2)
+        elif src_len // compression == target_len and src_len % compression == 0:
+            actions = actions.view(actions.shape[0], target_len, compression,
+                                   -1).mean(dim=2)
+        else:
+            actions = F.interpolate(actions.transpose(1, 2).unsqueeze(-1),
+                                    size=(target_len, 1),
+                                    mode="linear",
+                                    align_corners=False).squeeze(-1).transpose(
+                                        1, 2)
+        return actions
+
+    def _load_actions_from_path(self, action_path: str | list[str]) -> torch.Tensor:
+        """Load action tensors from disk (.pt/.pth/.npy supported)."""
+        paths = action_path if isinstance(action_path, list) else [action_path]
+        paths = [p for p in paths if p]  # drop empty strings
+        if not paths:
+            raise ValueError("No valid action paths provided.")
+        tensors = []
+        for p in paths:
+            if p.endswith((".pt", ".pth")):
+                data = torch.load(p)
+            elif p.endswith(".npy"):
+                data = torch.from_numpy(np.load(p))
+            else:
+                raise ValueError(f"Unsupported action file type: {p}")
+            tensors.append(torch.as_tensor(data))
+        if len(tensors) == 1:
+            return tensors[0]
+        return torch.stack(tensors, dim=0)
 
     def _transformer_forward_and_compute_loss(
             self, training_batch: TrainingBatch) -> TrainingBatch:
