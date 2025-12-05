@@ -74,3 +74,6 @@ preprocess_output_text/
 # newly added
 Instruction.md
 uv.lock
+!dataset/**/*.txt
+!dataset/**/*.pt
+!dataset/**/*.mp4
