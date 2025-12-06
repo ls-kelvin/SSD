@@ -68,7 +68,7 @@ def prepare_dataset_json(folder_path,
         if not actions_path.exists():
             raise FileNotFoundError(f"{actions_path} not found")
         with open(actions_path) as f:
-            action_paths = [line.strip() for line in f.readlines() if line.strip()]
+            action_paths = [(folder_path / line.strip()).absolute().__str__() for line in f.readlines() if line.strip()]
 
     if len(prompts) != len(video_paths):
         raise ValueError(

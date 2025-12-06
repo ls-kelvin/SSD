@@ -26,8 +26,10 @@ def generate_merged_validation_json(input_dir, output_file):
             "num_inference_steps": 40,
             "height": 480,
             "width": 832,
-            "num_frames": 77
+            "num_frames": 81,
         }
+        if "action_path" in element:
+            validation_entry["action_path"] = element["action_path"]
         validation_data.append(validation_entry)
 
     # Create the final validation structure
