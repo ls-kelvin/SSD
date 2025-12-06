@@ -464,9 +464,16 @@ class TrainingPipeline(LoRAPipeline, ABC):
             step = src_len // target_len
             actions = actions.view(actions.shape[0], target_len, step,
                                    -1).mean(dim=2)
-        elif src_len // compression == target_len and src_len % compression == 0:
-            actions = actions.view(actions.shape[0], target_len, compression,
-                                   -1).mean(dim=2)
+        elif (src_len - 1) // compression + 1 == target_len:
+            # VAE formula: latent_frames = (frames - 1) // compression + 1
+            # First frame is not compressed, remaining frames are compressed
+            # e.g., 17 frames (1+16) -> 5 latents (1+4)
+            # action[0] -> latent[0], action[1:5] -> latent[1], etc.
+            first_action = actions[:, 0:1]  # [B, 1, ...]
+            remaining_actions = actions[:, 1:]  # [B, T, ...]
+            remaining_actions = remaining_actions.view(
+                actions.shape[0], target_len - 1, compression, -1).mean(dim=2)
+            actions = torch.cat([first_action, remaining_actions], dim=1)
         else:
             actions = F.interpolate(actions.transpose(1, 2).unsqueeze(-1),
                                     size=(target_len, 1),
