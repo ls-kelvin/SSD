@@ -63,6 +63,8 @@ def basic_t2v_record_creator(batch: PreprocessBatch) -> list[dict[str, Any]]:
             "fps":
             fps_val,
         }
+        if batch.action_path is not None:
+            record["action_path"] = batch.action_path[idx]
         records.append(record)
 
     return records

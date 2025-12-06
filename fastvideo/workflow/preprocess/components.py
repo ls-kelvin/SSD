@@ -300,9 +300,6 @@ def build_dataset(preprocess_config: PreprocessConfig, split: str,
         # add video column
         def add_video_column(item: dict[str, Any]) -> dict[str, Any]:
             item["video"] = os.path.join(video_folder, item["name"])
-            if "action_path" in item and item["action_path"]:
-                item["action_path"] = os.path.join(video_folder.parent,
-                                                   item["action_path"])
             return item
 
         dataset = dataset.map(add_video_column)

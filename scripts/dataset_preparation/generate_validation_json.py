@@ -30,8 +30,8 @@ def generate_merged_validation_json(input_dir, output_file, num_elements=64, num
     for element in sampled_elements:
         assert element.get("cap") is not None, f"Caption is None for element: {element}"
         validation_entry = {
-            "caption": element["cap"],
-            "video_path": element.get("path", ""),
+            "caption": element["cap"][0],
+            "video_path": None,
             "num_inference_steps": num_inference_steps,
             "height": height,
             "width": width,
