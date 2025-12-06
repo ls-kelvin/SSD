@@ -103,6 +103,19 @@ class LoRAPipeline(ComposedPipelineBase):
         self.modules["transformer"].requires_grad_(False)
         if "fake_score_transformer" in self.modules:
             self.modules["fake_score_transformer"].requires_grad_(False)
+
+        # Keep action modules trainable (full params) alongside LoRA weights
+        for name, module in self.modules["transformer"].named_modules():
+            if "action_conditioner" in name:
+                for p in module.parameters(recurse=True):
+                    p.requires_grad_(True)
+        if "fake_score_transformer" in self.modules:
+            for name, module in self.modules["fake_score_transformer"
+                                             ].named_modules():
+                if "action_conditioner" in name:
+                    for p in module.parameters(recurse=True):
+                        p.requires_grad_(True)
+
         device_mesh = init_device_mesh("cuda", (dist.get_world_size(), 1),
                                        mesh_dim_names=["fake", "replicate"])
         set_lora_grads(self.lora_layers, device_mesh)

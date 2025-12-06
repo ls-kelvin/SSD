@@ -50,6 +50,51 @@ class WanImageEmbedding(torch.nn.Module):
         return hidden_states
 
 
+class WanActionConditioner(nn.Module):
+
+    def __init__(self, action_dim: int, embed_dim: int):
+        super().__init__()
+        self.proj = nn.Linear(action_dim, embed_dim)
+        self.mlp = MLP(embed_dim,
+                       embed_dim,
+                       embed_dim,
+                       act_type="gelu_pytorch_tanh")
+
+    def forward(self, hidden_states: torch.Tensor, actions: torch.Tensor,
+                num_frames: int) -> torch.Tensor:
+        """
+        Project and inject per-frame action vectors into the latent tokens.
+
+        Args:
+            hidden_states: Patch-embedded latents of shape [B, tokens, C]
+            actions: Per-frame action vectors of shape [B, F, action_dim]
+            num_frames: Number of frames after patching (temporal dimension)
+        """
+        if actions.dim() != 3:
+            raise ValueError(
+                f"Expected actions with shape [batch, frames, action_dim], got {actions.shape}"
+            )
+        batch_size, seq_len, _ = hidden_states.shape
+        tokens_per_frame, remainder = divmod(seq_len, num_frames)
+        if remainder != 0:
+            raise ValueError(
+                f"Token count {seq_len} is not divisible by num_frames {num_frames}."
+            )
+        if actions.shape[1] != num_frames:
+            raise ValueError(
+                f"Action length {actions.shape[1]} must match number of frames {num_frames}."
+            )
+
+        action_embeds = self.proj(actions.to(hidden_states.device,
+                                             hidden_states.dtype))
+        action_deltas = self.mlp(action_embeds)
+
+        hidden_states = hidden_states.view(batch_size, num_frames,
+                                           tokens_per_frame, -1)
+        hidden_states = hidden_states + action_deltas.unsqueeze(2)
+        return hidden_states.view(batch_size, seq_len, -1)
+
+
 class WanTimeTextImageEmbedding(nn.Module):
 
     def __init__(
@@ -563,6 +608,8 @@ class WanTransformer3DModel(CachableDiT):
         self.patch_size = config.patch_size
         self.text_len = config.text_len
         self.action_dim = config.action_dim
+        self.action_conditioner = WanActionConditioner(
+            self.action_dim, inner_dim) if self.action_dim is not None else None
 
         # 1. Patch & position embedding
         self.patch_embedding = PatchEmbed(in_chans=config.in_channels,
@@ -577,16 +624,6 @@ class WanTransformer3DModel(CachableDiT):
             text_embed_dim=config.text_dim,
             image_embed_dim=config.image_dim,
         )
-
-        # 2.1 Action embeddings (optional)
-        self.action_proj = None
-        self.action_mlp = None
-        if self.action_dim is not None:
-            self.action_proj = nn.Linear(self.action_dim, inner_dim)
-            self.action_mlp = MLP(inner_dim,
-                                  inner_dim,
-                                  inner_dim,
-                                  act_type="gelu_pytorch_tanh")
 
         # 3. Transformer blocks
         attn_backend = envs.FASTVIDEO_ATTENTION_BACKEND
@@ -676,12 +713,9 @@ class WanTransformer3DModel(CachableDiT):
 
         hidden_states = self.patch_embedding(hidden_states)
         hidden_states = hidden_states.flatten(2).transpose(1, 2)
-        if actions is not None:
-            hidden_states = self._apply_action_conditioning(
-                hidden_states=hidden_states,
-                actions=actions,
-                num_frames=post_patch_num_frames,
-            )
+        if actions is not None and self.action_conditioner is not None:
+            hidden_states = self.action_conditioner(hidden_states, actions,
+                                                    post_patch_num_frames)
 
         # timestep shape: batch_size, or batch_size, seq_len (wan 2.2 ti2v)
         if timestep.dim() == 2:
@@ -755,46 +789,6 @@ class WanTransformer3DModel(CachableDiT):
         output = hidden_states.flatten(6, 7).flatten(4, 5).flatten(2, 3)
 
         return output
-
-    def _apply_action_conditioning(self, hidden_states: torch.Tensor,
-                                   actions: torch.Tensor,
-                                   num_frames: int) -> torch.Tensor:
-        """
-        Project and inject per-frame action vectors into the latent tokens.
-
-        Args:
-            hidden_states: Patch-embedded latents of shape [B, tokens, C]
-            actions: Per-frame action vectors of shape [B, F, action_dim]
-            num_frames: Number of frames after patching (temporal dimension)
-        """
-        if self.action_proj is None or self.action_mlp is None:
-            raise ValueError(
-                "Action conditioning modules are not initialized for this model."
-            )
-
-        if actions.dim() != 3:
-            raise ValueError(
-                f"Expected actions with shape [batch, frames, action_dim], got {actions.shape}"
-            )
-        batch_size, seq_len, _ = hidden_states.shape
-        tokens_per_frame, remainder = divmod(seq_len, num_frames)
-        if remainder != 0:
-            raise ValueError(
-                f"Token count {seq_len} is not divisible by num_frames {num_frames}."
-            )
-        if actions.shape[1] != num_frames:
-            raise ValueError(
-                f"Action length {actions.shape[1]} must match number of frames {num_frames}."
-            )
-
-        action_embeds = self.action_proj(actions.to(
-            hidden_states.device, hidden_states.dtype))
-        action_deltas = self.action_mlp(action_embeds)
-
-        hidden_states = hidden_states.view(batch_size, num_frames,
-                                           tokens_per_frame, -1)
-        hidden_states = hidden_states + action_deltas.unsqueeze(2)
-        return hidden_states.view(batch_size, seq_len, -1)
 
     def maybe_cache_states(self, hidden_states: torch.Tensor,
                            original_hidden_states: torch.Tensor) -> None:
